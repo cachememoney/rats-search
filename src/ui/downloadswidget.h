@@ -26,7 +26,7 @@ public:
 
     QString hash() const { return hash_; }
 
-    void updateProgress(qint64 downloaded, qint64 total, int speed, double progress);
+    void updateProgress(qint64 downloaded, qint64 total, int speed, double progress, bool checking = false);
     // Refresh the display name and size once a magnet's metadata arrives (the
     // item is first created with the info-hash as a placeholder name and size 0).
     void updateInfo(const QString& name, qint64 size);
@@ -57,7 +57,8 @@ private:
 
     // Once a torrent is completed its presentation is sticky: later progress
     // updates (which carry paused=false and a non-completed style) must not
-    // revert the "Completed" look. Guards updateProgress()/setPaused().
+    // revert the "Completed" look. Recheck after restart is the exception
+    // (updateProgress(..., checking=true)). Guards updateProgress()/setPaused().
     bool completed_ = false;
 };
 

@@ -400,7 +400,10 @@ GET http://localhost:8095/api/download.remove?hash=29ebe63...&saveResumeData=fal
 GET http://localhost:8095/api/download.list
 ```
 
-No parameters. Returns an array of active-download objects with progress info.
+No parameters. Returns an array of active-download objects with progress info
+(`progress`, `downloadSpeed`, `peersConnected`, `paused`, `completed`, `checking`, …).
+`checking` is true while Rats is hash-verifying on-disk pieces (typical right after
+a restart) and is not transferring data yet.
 
 ---
 

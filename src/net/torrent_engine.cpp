@@ -304,6 +304,7 @@ TorrentSnapshot TorrentEngine::status(const QString& hash) const
     snap.exists = st.exists;
     snap.hasMetadata = st.has_metadata;
     snap.isComplete = st.is_complete;
+    snap.checking = st.checking;
     snap.name = QString::fromStdString(st.name);
     snap.totalSize = static_cast<qint64>(st.total_size);
     snap.downloaded = static_cast<qint64>(st.downloaded);

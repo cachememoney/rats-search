@@ -47,6 +47,7 @@ struct Download {
     bool removeOnDone = false;
     bool ready = false; // metadata (name/files/size) known
     bool completed = false;
+    bool checking = false; // hashing on-disk pieces; not transferring yet
     QVector<DownloadFile> files;
 
     // Rolling sample used to derive downloadSpeed from the cumulative byte
@@ -136,6 +137,11 @@ private:
     // torrent shows as completed immediately, before librats' async recheck.
     bool restore(const Download& entry);
     void setRemoveOnDone(const QString& hash, bool removeOnDone);
+    // Pause / file-selection flags from the session row, applied after restore().
+    void applyRestoredSessionFlags(const Download& entry);
+    // Start at most one queued restore while no torrent is hash-checking, so
+    // startup does not hash every session torrent against disk in parallel.
+    void kickRestoreQueue();
 
     // State changes detected during a poll, flushed as signals afterwards.
     struct Transitions {
@@ -163,6 +169,7 @@ private:
     QString defaultDownloadPath_;
 
     QHash<QString, Download> downloads_;
+    QVector<Download> pendingRestore_;
     mutable QMutex mutex_;
 
     QTimer* updateTimer_ = nullptr;

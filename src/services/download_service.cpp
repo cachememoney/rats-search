@@ -41,6 +41,7 @@ QJsonObject Download::toJson() const
     obj["removeOnDone"] = removeOnDone;
     obj["ready"] = ready;
     obj["completed"] = completed;
+    obj["checking"] = checking;
 
     QJsonArray filesArr;
     for (const DownloadFile& f : files) {
@@ -264,13 +265,16 @@ bool DownloadService::restore(const Download& entry)
     // on-disk files asynchronously — status() right now still reports 0 % /
     // not-complete — so without this a finished torrent would flash as a 0 %
     // download until the recheck lands. The 1 s poll stays authoritative and
-    // reconciles once the check completes. `paused`/`removeOnDone` are applied by
-    // loadSession() afterwards, so they are deliberately not seeded here.
+    // reconciles once the check completes. Pause / file-selection flags are
+    // applied by applyRestoredSessionFlags() after restore() returns.
     d.completed = entry.completed;
     d.totalSize = entry.totalSize;
     d.downloadedBytes = entry.downloadedBytes;
     d.progress = entry.progress;
     d.files = entry.files;
+    // addMagnetResumed starts an on-disk recheck; treat it as checking until the
+    // poll sees Downloading/Seeding so the restore queue stays serialized.
+    d.checking = true;
 
     // If resume data already brought back the metadata, populate immediately.
     net::TorrentSnapshot snap = engine_->status(h);
@@ -287,6 +291,7 @@ bool DownloadService::restore(const Download& entry)
                 f.progress = 1.0;
             }
         }
+        d.checking = snap.checking;
     }
 
     {
@@ -298,7 +303,7 @@ bool DownloadService::restore(const Download& entry)
     if (!d.files.isEmpty()) {
         emit filesReady(h, filesToJson(d.files));
     }
-    if (d.completed) {
+    if (d.completed && !d.checking) {
         emit downloadCompleted(h);
     }
     return true;
@@ -560,40 +565,75 @@ bool DownloadService::saveSession(const QString& filePath)
     return sessionStore_->save(filePath, snapshot);
 }
 
+void DownloadService::applyRestoredSessionFlags(const Download& entry)
+{
+    if (entry.paused) {
+        pause(entry.hash);
+    }
+    setRemoveOnDone(entry.hash, entry.removeOnDone);
+
+    if (!entry.files.isEmpty()) {
+        QVector<bool> selection;
+        for (const DownloadFile& f : entry.files) {
+            selection.append(f.selected);
+        }
+        selectFiles(entry.hash, selection);
+    }
+}
+
+void DownloadService::kickRestoreQueue()
+{
+    while (true) {
+        Download next;
+        {
+            QMutexLocker lock(&mutex_);
+            if (pendingRestore_.isEmpty()) {
+                return;
+            }
+            for (auto it = downloads_.constBegin(); it != downloads_.constEnd(); ++it) {
+                if (it.value().checking) {
+                    return;
+                }
+            }
+            next = pendingRestore_.takeFirst();
+        }
+
+        qInfo() << "DownloadService: Restoring torrent:" << next.hash.left(8) << next.name.left(30)
+                << (next.completed ? "(completed/seeding)" : "(downloading)");
+
+        if (!restore(next)) {
+            continue;
+        }
+        applyRestoredSessionFlags(next);
+        // One in-flight recheck at a time; the 1s poll kicks the queue again
+        // once `checking` clears.
+        return;
+    }
+}
+
 int DownloadService::loadSession(const QString& filePath)
 {
     QVector<Download> entries = sessionStore_->load(filePath);
-    int restored = 0;
+    int queued = 0;
 
-    for (const Download& e : entries) {
-        if (!infohash::isValid(e.hash)) {
-            continue;
-        }
-
-        qInfo() << "DownloadService: Restoring torrent:" << e.hash.left(8) << e.name.left(30)
-                << (e.completed ? "(completed/seeding)" : "(downloading)");
-
-        if (restore(e)) {
-            if (e.paused) {
-                pause(e.hash);
+    {
+        QMutexLocker lock(&mutex_);
+        pendingRestore_.clear();
+        for (const Download& e : entries) {
+            if (!infohash::isValid(e.hash)) {
+                continue;
             }
-            setRemoveOnDone(e.hash, e.removeOnDone);
-
-            if (!e.files.isEmpty()) {
-                QVector<bool> selection;
-                for (const DownloadFile& f : e.files) {
-                    selection.append(f.selected);
-                }
-                selectFiles(e.hash, selection);
-            }
-            restored++;
+            pendingRestore_.append(e);
+            queued++;
         }
     }
 
-    if (restored > 0) {
-        qInfo() << "DownloadService: Restored" << restored << "torrents from session";
+    kickRestoreQueue();
+
+    if (queued > 0) {
+        qInfo() << "DownloadService: Queued" << queued << "torrents from session (serialized recheck)";
     }
-    return restored;
+    return queued;
 }
 
 // ============================================================================
@@ -607,6 +647,7 @@ void DownloadService::onUpdateTimer()
     }
     Transitions t = pollStatus();
     flushTransitions(t);
+    kickRestoreQueue();
 }
 
 DownloadService::Transitions DownloadService::pollStatus()
@@ -650,6 +691,7 @@ DownloadService::Transitions DownloadService::pollStatus()
                 d.downloadedBytes = snap.downloaded;
                 d.peersConnected = snap.numPeers;
                 d.progress = snap.progress;
+                d.checking = snap.checking;
                 if (d.totalSize == 0 && snap.totalSize > 0) {
                     d.totalSize = snap.totalSize;
                 }
@@ -737,6 +779,7 @@ void DownloadService::applySnapshot(Download& d, const net::TorrentSnapshot& sna
     d.peersConnected = snap.numPeers;
     d.completed = snap.isComplete;
     d.ready = snap.hasMetadata;
+    d.checking = snap.checking;
 
     d.files.clear();
     for (int i = 0; i < snap.files.size(); ++i) {
@@ -790,6 +833,8 @@ QJsonObject DownloadService::progressJson(const Download& d)
     o["downloadSpeed"] = static_cast<int>(d.downloadSpeed);
     o["paused"] = d.paused;
     o["completed"] = d.completed; // so a progress update alone can render "completed"
+    o["checking"] = d.checking;
+    o["peersConnected"] = d.peersConnected;
     o["removeOnDone"] = d.removeOnDone;
     if (d.downloadSpeed > 0 && d.totalSize > d.downloadedBytes) {
         o["timeRemaining"] = static_cast<qint64>((d.totalSize - d.downloadedBytes) / d.downloadSpeed);

@@ -32,6 +32,7 @@ struct TorrentSnapshot {
     bool exists = false; // librats still tracks this info-hash
     bool hasMetadata = false; // name/files/size are known
     bool isComplete = false;
+    bool checking = false; // hashing on-disk pieces (startup restore / recheck)
     QString name;
     qint64 totalSize = 0;
     qint64 downloaded = 0;

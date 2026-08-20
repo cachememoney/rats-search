@@ -643,7 +643,8 @@ void MainWindow::connectServiceSignals()
                     qint64 total = progress["total"].toVariant().toLongLong();
                     double progressVal = progress["progress"].toDouble();
                     int speed = static_cast<int>(progress["downloadSpeed"].toDouble());
-                    detailsPanel->setDownloadProgress(progressVal, downloaded, total, speed);
+                    const bool checking = progress["checking"].toBool();
+                    detailsPanel->setDownloadProgress(progressVal, downloaded, total, speed, checking);
                 }
             });
         connect(downloads, &rats::service::DownloadService::downloadCompleted, this, [this](const QString& hash) {

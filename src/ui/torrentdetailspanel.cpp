@@ -469,7 +469,9 @@ void TorrentDetailsPanel::setTorrent(const rats::domain::Torrent& torrent)
     // Check if this torrent is currently downloading
     if (app_ && app_->downloads() && app_->downloads()->isDownloading(torrent.hash)) {
         rats::service::Download d = app_->downloads()->getDownload(torrent.hash);
-        if (d.completed) {
+        if (d.checking) {
+            setDownloadProgress(d.progress, d.downloadedBytes, d.totalSize, static_cast<int>(d.downloadSpeed), true);
+        } else if (d.completed) {
             setDownloadCompleted();
         } else {
             setDownloadProgress(d.progress, d.downloadedBytes, d.totalSize, static_cast<int>(d.downloadSpeed));
@@ -694,7 +696,7 @@ void TorrentDetailsPanel::updateVotingButtons()
     }
 }
 
-void TorrentDetailsPanel::setDownloadProgress(double progress, qint64 downloaded, qint64 total, int speed)
+void TorrentDetailsPanel::setDownloadProgress(double progress, qint64 downloaded, qint64 total, int speed, bool checking)
 {
     isDownloading_ = true;
     downloadProgressWidget_->show();
@@ -705,7 +707,11 @@ void TorrentDetailsPanel::setDownloadProgress(double progress, qint64 downloaded
 
     downloadStatusLabel_->setText(
         QString("%1 / %2").arg(rats::ui::formatSize(downloaded), rats::ui::formatSize(total)));
-    downloadSpeedLabel_->setText(rats::ui::formatSpeed(speed));
+    if (checking) {
+        downloadSpeedLabel_->setText(tr("Checking files…"));
+    } else {
+        downloadSpeedLabel_->setText(rats::ui::formatSpeed(speed));
+    }
 }
 
 void TorrentDetailsPanel::setDownloadCompleted()

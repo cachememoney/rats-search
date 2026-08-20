@@ -41,7 +41,7 @@ public:
     QString currentHash() const { return currentHash_; }
 
     // Download progress
-    void setDownloadProgress(double progress, qint64 downloaded, qint64 total, int speed);
+    void setDownloadProgress(double progress, qint64 downloaded, qint64 total, int speed, bool checking = false);
     void setDownloadCompleted();
     void resetDownloadState();
 
